@@ -29,26 +29,35 @@ This is a NodeJS command-line tool for parsing log files that contain object lit
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/yourusername/nodejs-log-object-parser.git
-   cd nodejs-log-object-parser
+   git clone https://github.com/iotux/log-parser.git
+   cd log-parser
    ```
 
 2. **Ensure you have NodeJS installed.**
 
 3. **Make the script executable (if not already):**
 
-   ```bash
-   chmod +x parser.js
-   ```
+```bash
+chmod +x logparser.js
+```
+For your convenience, you can copy the program to any location on your **PATH** and rename. Example:
 
+```bash
+cp logparser.js ~/bin/logparser
+```
 ## Usage
 
 Run the script with the required options:
 
 ```bash
-./parser.js -k <keyword> [options] <filename>
+./logparser.js -k <keyword> [options] <filename>
 ```
 
+Or, if you have renamed and copied the program to a **PATH** location:
+
+```bash
+logparser -k <keyword> [options] <filename>
+```
 ### Options
 
 - `-k <keyword>`  
@@ -87,31 +96,31 @@ MyAppLog {
 ### Example 1: Print Beautified JSON
 
 ```bash
-./parser.js -k "MyAppLog" -J log.txt
+./logparser.js -k "MyAppLog" -J log.txt
 ```
 
 ### Example 2: Print Plain JSON
 
 ```bash
-./parser.js -k "MyAppLog" -j log.txt
+./logparser.js -k "MyAppLog" -j log.txt
 ```
 
 ### Example 3: Output as a Table
 
 ```bash
-./parser.js -k "MyAppLog" -t log.txt
+./logparser.js -k "MyAppLog" -t log.txt
 ```
 
 ### Example 4: Filter Records That Contain a Specific Key
 
 ```bash
-./parser.js -k "MyAppLog" -s "sortedHourlyConsumption" log.txt
+./logparser.js -k "MyAppLog" -s "sortedHourlyConsumption" log.txt
 ```
 
 ### Example 5: Output Only Selected Keys
 
 ```bash
-./parser.js -k "MyAppLog" -l "consumptionToday,productionToday" log.txt
+./logparser.js -k "MyAppLog" -l "consumptionToday,productionToday" log.txt
 ```
 
 ## Contributing
