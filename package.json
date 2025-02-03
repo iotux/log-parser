@@ -1,0 +1,24 @@
+{
+  "name": "nodejs-log-object-parser",
+  "version": "1.0.0",
+  "description": "A Node.js CLI tool for parsing log files containing NodeJS/JSON objects.",
+  "main": "parser.js",
+  "bin": {
+    "log-parser": "./parser.js"
+  },
+  "scripts": {
+    "start": "node parser.js"
+  },
+  "keywords": [
+    "parser",
+    "log",
+    "nodejs",
+    "json",
+    "object",
+    "CLI",
+    "recursive"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
+
