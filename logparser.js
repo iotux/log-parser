@@ -2,9 +2,17 @@
 
 const fs = require('fs');
 const readline = require('readline');
+const path = require('path'); // Added to get the base name of the executable
 
 let recordSet = [];
 const options = parseArgs();
+
+// If the help option is provided or if no filename or keyword is given, print help and exit.
+if (options.help || !options.filename || !options.keyword) {
+  printHelp();
+  process.exit(0);
+}
+
 const filePath = options.filename;
 
 // ==================================================================
@@ -14,13 +22,15 @@ function parseArgs() {
   const args = process.argv.slice(2);
   const options = {
     keyword: null,
-    // New options: -J for beautified JSON, -j for plain JSON.
-    jsonBeautified: false,
-    jsonPlain: false,
-    subkeyword: null,
-    listOfWords: [],
+    jsonBeautified: false,  // -J option
+    jsonPlain: false,       // -j option
+    subkeyword: null,       // -s option
+    listOfWords: [],        // -l option
+    discardFull: false,     // -d option to discard full duplicate records
+    discardKeys: [],        // -D option: comma-separated list of keys to compare
+    help: false,            // -h option
+    asTable: false,         // -t option
     filename: null,
-    asTable: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -41,7 +51,22 @@ function parseArgs() {
         options.subkeyword = args[++i];
         break;
       case '-l':
-        options.listOfWords = args[++i].split(',');
+        options.listOfWords = args[++i]
+          .split(',')
+          .map(s => s.trim())
+          .filter(s => s.length > 0);
+        break;
+      case '-d':
+        options.discardFull = true;
+        break;
+      case '-D':
+        options.discardKeys = args[++i]
+          .split(',')
+          .map(s => s.trim())
+          .filter(s => s.length > 0);
+        break;
+      case '-h':
+        options.help = true;
         break;
       default:
         if (!options.filename) {
@@ -54,13 +79,37 @@ function parseArgs() {
 }
 
 // ==================================================================
-// 2. A helper to “filter” a value string into an appropriate type.
-//    (If the value is quoted, we return a string; if it looks like a
-//    number, we convert it; otherwise we try booleans.)
+// 2. Print help message and usage instructions
+// ==================================================================
+function printHelp() {
+  const execName = path.basename(process.argv[1]); // Only the file name (not the full path)
+  console.log(`Usage: ${execName} -k <keyword> [options] <filename>
+
+Options:
+  -k <keyword>         (Required) Specify the keyword that triggers the start of a record.
+  -J                   Print JSON output in beautified (pretty-printed) format.
+  -j                   Print JSON output in plain (compact) format.
+  -t                   Display output as a table.
+  -s <subkeyword>      Only include records that contain the specified key.
+  -l <key1,key2,...>   Only include the listed keys in the output. Commas may be followed by spaces.
+  -d                   Discard duplicate records (full object comparison).
+  -D <key1,key2,...>   Discard records that have duplicate values for the specified keys.
+  -h                   Print this help message.
+
+Notes:
+  • A record is recognized only when a line starts with the specified keyword (-k).
+  • When parsing JSON objects, they must be in a beautified (multi-line) format.
+  • The parser assumes one key/value pair per line; multiple pairs on one line may not be parsed correctly.
+  • This tool uses only Node.js built-in modules and has no external dependencies.
+`);
+}
+
+// ==================================================================
+// 3. A helper to “filter” a value string into an appropriate type.
 // ==================================================================
 function filterValue(value) {
   value = value.trim();
-  // If it is surrounded by quotes, return it as a string.
+  // If the value is surrounded by quotes, return it as a string.
   if (
     (value.startsWith('"') && value.endsWith('"')) ||
     (value.startsWith("'") && value.endsWith("'"))
@@ -74,13 +123,11 @@ function filterValue(value) {
   // Check for booleans.
   if (value === 'true') return true;
   if (value === 'false') return false;
-  // Otherwise, return the raw string.
   return value;
 }
 
 // ==================================================================
-// 3. A function to split a string on commas that are at the “top‐level”.
-//    (That is, commas not contained inside braces, brackets, or quotes.)
+// 4. A function to split a string on commas that are at the “top‐level”.
 // ==================================================================
 function splitTopLevel(str) {
   let parts = [];
@@ -91,7 +138,6 @@ function splitTopLevel(str) {
   for (let i = 0; i < str.length; i++) {
     let ch = str[i];
 
-    // If inside a quoted string, just append until the matching quote.
     if (inQuotes) {
       current += ch;
       if (ch === quoteChar) {
@@ -99,21 +145,17 @@ function splitTopLevel(str) {
       }
       continue;
     }
-    // If a quote starts, note it.
     if (ch === '"' || ch === "'") {
       inQuotes = true;
       quoteChar = ch;
       current += ch;
       continue;
     }
-
-    // Adjust depth if we see an opening or closing brace/bracket.
     if (ch === '{' || ch === '[') {
       depth++;
     } else if (ch === '}' || ch === ']') {
       depth--;
     }
-    // If we see a comma at top level, that’s a separator.
     if (ch === ',' && depth === 0) {
       parts.push(current.trim());
       current = "";
@@ -128,11 +170,9 @@ function splitTopLevel(str) {
 }
 
 // ==================================================================
-// 4. Recursive parser functions that take a block (string) and return
+// 5. Recursive parser functions that take a block (string) and return
 //    the corresponding object, array or simple value.
 // ==================================================================
-
-// Determines what to do based on the first non-whitespace character.
 function parseValue(str) {
   str = str.trim();
   if (str.startsWith('{')) {
@@ -144,10 +184,7 @@ function parseValue(str) {
   }
 }
 
-// Parse an object block. We assume the string starts with '{' and ends
-// with the matching '}'.
 function parseObject(str) {
-  // Remove the outer braces.
   let inner = str.trim();
   if (inner.startsWith('{')) {
     inner = inner.substring(1);
@@ -158,11 +195,9 @@ function parseObject(str) {
   inner = inner.trim();
   if (inner === "") return {};
 
-  // Split on commas at the top level.
   let parts = splitTopLevel(inner);
   let obj = {};
   for (let part of parts) {
-    // Look for the first colon.
     let colonIndex = part.indexOf(':');
     if (colonIndex === -1) continue;
     let key = part.substring(0, colonIndex).trim();
@@ -179,10 +214,7 @@ function parseObject(str) {
   return obj;
 }
 
-// Parse an array block. We assume the string starts with '[' and ends with
-// the matching ']'.
 function parseArray(str) {
-  // Remove the outer brackets.
   let inner = str.trim();
   if (inner.startsWith('[')) {
     inner = inner.substring(1);
@@ -192,7 +224,6 @@ function parseArray(str) {
   }
   inner = inner.trim();
   if (inner === "") return [];
-  // Split on top-level commas.
   let parts = splitTopLevel(inner);
   let arr = [];
   for (let part of parts) {
@@ -202,8 +233,8 @@ function parseArray(str) {
 }
 
 // ==================================================================
-// 5. The main function that reads the file line-by-line, collects each
-//    record’s block, and then uses the above parser to build an object.
+// 6. The main function: reads the file line-by-line, collects each record's
+//    block, and then uses the parser functions to build objects.
 // ==================================================================
 async function main(filePath) {
   try {
@@ -213,28 +244,24 @@ async function main(filePath) {
       crlfDelay: Infinity,
     });
 
-    // We'll accumulate complete record blocks.
+    // Accumulate complete record blocks.
     let recordBlocks = [];
     let currentBlock = "";
     let recordStarted = false;
-    let braceDepth = 0; // count of unmatched '{'
+    let braceDepth = 0;
     
     for await (let line of rl) {
-      // Look for the keyword indicating the start of a record.
       if (!recordStarted && options.keyword && line.startsWith(options.keyword)) {
         recordStarted = true;
-        // Find the first "{" on the line.
         let idx = line.indexOf('{');
         if (idx !== -1) {
           currentBlock = line.substring(idx);
-          // Initialize depth based on this line.
           for (let ch of currentBlock) {
             if (ch === '{') braceDepth++;
             else if (ch === '}') braceDepth--;
           }
         }
       } else if (recordStarted) {
-        // Append the line to the current block.
         currentBlock += "\n" + line;
         for (let ch of line) {
           if (ch === '{') braceDepth++;
@@ -242,8 +269,6 @@ async function main(filePath) {
         }
       }
       
-      // If we have started a record and the brace count returns to 0,
-      // we assume the record is complete.
       if (recordStarted && braceDepth === 0) {
         recordBlocks.push(currentBlock);
         currentBlock = "";
@@ -251,30 +276,38 @@ async function main(filePath) {
       }
     }
 
-    // Now parse each record block.
+    // Prepare sets for duplicate filtering.
+    const fullDuplicates = new Set();
+    const compositeDuplicates = new Set();
+
+    // Parse each record block.
     for (let block of recordBlocks) {
       let rec = parseObject(block);
-      // If the -s (subkeyword) option is provided, only keep records
-      // that have that key.
       if (options.subkeyword && !(options.subkeyword in rec)) continue;
-      // If a list of words was provided, filter out other keys.
       if (options.listOfWords.length > 0) {
         let filtered = {};
         for (let key of options.listOfWords) {
           if (key in rec) filtered[key] = rec[key];
         }
-        recordSet.push(filtered);
-      } else {
-        recordSet.push(rec);
+        rec = filtered;
       }
+      // Discard full duplicate objects.
+      if (options.discardFull) {
+        const recStr = JSON.stringify(rec);
+        if (fullDuplicates.has(recStr)) continue;
+        fullDuplicates.add(recStr);
+      }
+      // Discard objects based on duplicate key values.
+      if (options.discardKeys.length > 0) {
+        const compositeKey = options.discardKeys.map(k => rec[k] !== undefined ? rec[k] : "").join("|");
+        if (compositeDuplicates.has(compositeKey)) continue;
+        compositeDuplicates.add(compositeKey);
+      }
+      recordSet.push(rec);
     }
 
     // ==================================================================
-    // 6. Output the results based on the selected options.
-    // -J: Beautified JSON (pretty-printed)
-    // -j: Plain JSON
-    // -t: Table format
-    // Default: Just log the object.
+    // 7. Output the results based on the selected options.
     // ==================================================================
     if (options.jsonBeautified) {
       console.log(JSON.stringify(recordSet, null, 2));
