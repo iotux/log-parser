@@ -3,17 +3,19 @@ const fs = require('fs');
 const readline = require('readline');
 const path = require('path');
 
+// Global variable to hold the unfiltered records
+let recordSet = [];
 const options = parseArgs();
+const filePath = options.filename;
 
 // If help or required options (-k and filename) are missing, print help and exit.
 if (options.help || !options.filename || !options.keyword) {
   printHelp();
   process.exit(0);
 }
-const filePath = options.filename;
 
 // ==================================================================
-// 1. Command-line arguments parser (including -c for CSV output)
+// 1. Command-line arguments parser
 // ==================================================================
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -23,11 +25,11 @@ function parseArgs() {
     jsonPlain: false,       // -j option
     csvFormat: false,       // -c option for CSV-format output
     asTable: false,         // -t option for table output
-    subkeyword: null,       // -s option
-    listOfWords: [],        // -l option (keys to include in output)
+    subkeyword: null,       // -s option (only include records that contain this key)
+    listOfWords: [],        // -l option (keys to include in the output)
     discardFull: false,     // -d option for full duplicate filtering
-    discardKeys: [],        // -D option: keys for composite duplicate filtering
-    help: false,            // -h option for help
+    discardKeys: [],        // -D option: composite duplicate filtering keys
+    help: false,            // -h option for help message
     filename: null,
   };
 
@@ -88,10 +90,10 @@ function printHelp() {
 
 Options:
   -k <keyword>         (Required) Specify the keyword that triggers the start of a record.
-  -J                   Print JSON output in beautified (pretty-printed) format.
-  -j                   Print JSON output in plain (compact) format.
+  -J                   Print beautified (pretty-printed) JSON.
+  -j                   Print plain (compact) JSON.
   -c                   Print output in CSV format.
-  -t                   Display output as a table.
+  -t                   Display output in a table.
   -s <subkeyword>      Only include records that contain the specified key.
   -l <key1,key2,...>   Only include the listed keys in the output. (Spaces after commas allowed)
   -d                   Discard duplicate records (full object comparison).
@@ -201,8 +203,9 @@ function parseArray(str) {
 }
 
 // ==================================================================
-// 4. Main function: collect record blocks, parse them, filter duplicates,
-//    project keys (if requested), remove "lineNumber", and output the results.
+// 4. Main function: read file, collect record blocks, parse records,
+//    then (if filtering options are used) push the results to a temporary array
+//    before outputting in the chosen format.
 // ==================================================================
 async function main(filePath) {
   try {
@@ -212,88 +215,86 @@ async function main(filePath) {
       crlfDelay: Infinity,
     });
 
-    // 4.1 Collect complete record blocks (tracking starting line number)
+    // 4.1 Collect complete record blocks.
     let recordBlocks = [];
     let currentBlock = "";
     let recordStarted = false;
     let braceDepth = 0;
-    let startLine = 0;
-    let lineNumber = 0;
-    
     for await (let line of rl) {
-      lineNumber++;
-      let trimmed = line.trim();
-      if (!recordStarted && options.keyword && trimmed.startsWith(options.keyword)) {
+      // Look for the keyword that signals the start of a record.
+      if (!recordStarted && options.keyword && line.startsWith(options.keyword)) {
         recordStarted = true;
-        startLine = lineNumber;
-        let idx = trimmed.indexOf('{');
+        // Find the first '{' on the line.
+        let idx = line.indexOf('{');
         if (idx !== -1) {
-          currentBlock = trimmed.substring(idx);
+          currentBlock = line.substring(idx);
+          // Initialize depth based on this line.
           for (let ch of currentBlock) {
             if (ch === '{') braceDepth++;
             else if (ch === '}') braceDepth--;
           }
         }
       } else if (recordStarted) {
+        // Append subsequent lines.
         currentBlock += "\n" + line;
         for (let ch of line) {
           if (ch === '{') braceDepth++;
           else if (ch === '}') braceDepth--;
         }
       }
-      
+      // If a record block is complete (brace count returns to zero), push it.
       if (recordStarted && braceDepth === 0) {
-        recordBlocks.push({ block: currentBlock, lineNumber: startLine });
+        recordBlocks.push(currentBlock);
         currentBlock = "";
         recordStarted = false;
       }
     }
-    
-    // 4.2 Parse each record block and attach its starting line number.
-    let recordSet = [];
-    for (let recObj of recordBlocks) {
-      let rec = parseObject(recObj.block);
-      rec.lineNumber = recObj.lineNumber;
+
+    // 4.2 Parse each record block into an object.
+    for (let block of recordBlocks) {
+      let rec = parseObject(block);
       if (options.subkeyword && !(options.subkeyword in rec)) continue;
       recordSet.push(rec);
     }
-    
-    // 4.3 Duplicate filtering:
-    // Full duplicate filtering (-d)
+
+    // 4.3 Now push the result to a temporary array before applying filtering.
+    let filteredRecords = recordSet.slice();
+
+    // If duplicate filtering is requested with -d, do full-object duplicate filtering.
     if (options.discardFull) {
       const seenFull = new Set();
-      recordSet = recordSet.filter(rec => {
+      filteredRecords = filteredRecords.filter(rec => {
         const recStr = JSON.stringify(rec);
         if (seenFull.has(recStr)) return false;
         seenFull.add(recStr);
         return true;
       });
     }
-    // Composite duplicate filtering (-D) as consecutive filtering:
+
+    // If composite duplicate filtering is requested with -D, process only consecutive duplicates.
     if (options.discardKeys.length > 0) {
-      let filtered = [];
+      let temp = [];
       let prevComposite = null;
-      for (let rec of recordSet) {
+      for (let rec of filteredRecords) {
         if (options.discardKeys.every(k => rec.hasOwnProperty(k))) {
           const composite = options.discardKeys.map(k => rec[k]).join("|");
           if (composite !== prevComposite) {
-            filtered.push(rec);
+            temp.push(rec);
           }
           prevComposite = composite;
         } else {
-          filtered.push(rec);
+          temp.push(rec);
           prevComposite = null;
         }
       }
-      recordSet = filtered;
+      filteredRecords = temp;
     }
-    
-    // 4.4 Projection: if -l is specified, project each record to only the desired keys.
-    // (For all output formats we now want to remove the "lineNumber" field.)
+
+    // If projection (-l) is used, limit the keys.
+    // (We now assume that if -l is used, we want only the specified keys.)
     if (options.listOfWords.length > 0) {
-      // Do not include "lineNumber" in the final output regardless.
-      options.listOfWords = options.listOfWords.filter(key => key !== "lineNumber");
-      recordSet = recordSet.map(rec => {
+      // Note: Do not add "lineNumber" automatically now.
+      filteredRecords = filteredRecords.map(rec => {
         let filtered = {};
         for (let key of options.listOfWords) {
           if (rec.hasOwnProperty(key)) filtered[key] = rec[key];
@@ -301,27 +302,20 @@ async function main(filePath) {
         return filtered;
       });
     }
-    
-    // 4.5 Remove "lineNumber" from records for final output in any case.
-    recordSet = recordSet.map(rec => {
-      let newRec = { ...rec };
-      delete newRec.lineNumber;
-      return newRec;
-    });
-    
-    // 4.6 Output the results.
+
+    // 4.4 Output the filtered array using the chosen output format.
     if (options.csvFormat) {
-      outputCSV(recordSet);
+      outputCSV(filteredRecords);
     } else if (options.jsonBeautified) {
-      console.log(JSON.stringify(recordSet, null, 2));
+      console.log(JSON.stringify(filteredRecords, null, 2));
     } else if (options.jsonPlain) {
-      console.log(JSON.stringify(recordSet));
+      console.log(JSON.stringify(filteredRecords));
     } else if (options.asTable) {
-      console.table(recordSet);
+      console.table(filteredRecords);
     } else {
-      console.log(recordSet);
+      console.log(filteredRecords);
     }
-    
+
   } catch (error) {
     console.error(`Error reading file: ${error.message}`);
   }
@@ -338,9 +332,6 @@ function outputCSV(records) {
   } else {
     keys = Object.keys(records[0]);
   }
-  // Ensure "lineNumber" is not in keys.
-  keys = keys.filter(key => key !== "lineNumber");
-  
   // Build header row.
   let csv = keys.map(k => `"${k}"`).join(",") + "\n";
   for (let rec of records) {
