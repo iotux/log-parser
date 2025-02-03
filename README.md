@@ -1,3 +1,4 @@
+
 # NodeJS Log Object Parser
 
 This is a NodeJS command-line tool for parsing log files that contain object literals or JSON objects. It is designed to extract and convert these objects—even those with nested objects and arrays—into a JavaScript object (or array of objects) that you can further process or export.
@@ -34,6 +35,7 @@ This is a NodeJS command-line tool for parsing log files that contain object lit
   - `-J`: Print beautified (pretty-printed) JSON.
   - `-j`: Print plain JSON.
   - `-t`: Display output in a table format.
+  - `-c`: Print output in CSV format.
 - **Filtering:**  
   - `-s`: Only output objects containing a specific key.
   - `-l`: Output only a list of selected keys from each object.
@@ -59,7 +61,8 @@ This is a NodeJS command-line tool for parsing log files that contain object lit
    ```bash
    chmod +x parser.js
    ```
-For your convenience, you can copy the program to any location on your **PATH** and rename. Example:
+
+For your convenience, you can copy the program to any location on your **PATH** and rename it. Example:
 
 ```bash
 cp logparser.js ~/bin/logparser
@@ -90,6 +93,8 @@ logparser -k <keyword> [options] <filename>
 - `-j`  
   Print JSON output in plain (compact) format.
 
+- `-c`  
+  Print output in CSV format.
 - `-t`  
   Display output as a table.
 
@@ -144,31 +149,43 @@ MyAppLog {
 ./parser.js -k "MyAppLog" -t log.txt
 ```
 
-### Example 4: Filter Records That Contain a Specific Key
+### Example 4: Output as CSV
+
+```bash
+./parser.js -k "MyAppLog" -c log.txt
+```
+
+### Example 5: Filter Records That Contain a Specific Key
 
 ```bash
 ./parser.js -k "MyAppLog" -s "sortedHourlyConsumption" log.txt
 ```
 
-### Example 5: Output Only Selected Keys
+### Example 6: Output Only Selected Keys
 
 ```bash
 ./parser.js -k "MyAppLog" -l "consumptionToday, productionToday" log.txt
 ```
 
-### Example 6: Discard Full Duplicate Records
+### Example 7: Discard Full Duplicate Records
 
 ```bash
 ./parser.js -k "MyAppLog" -d log.txt
 ```
 
-### Example 7: Discard Records Based on Duplicate Key Values
+### Example 8: Discard Records Based on Duplicate Key Values
 
 ```bash
 ./parser.js -k "MyAppLog" -D "consumptionToday, productionToday" log.txt
 ```
 
-### Example 8: Print Help Message
+### Example 9: Combined CSV and Duplicate Filtering Example
+
+```bash
+./parser.js -c -k "MyAppLog" -l "latestPulse, chargerOpMode, reasonForNoCurrent, totalPower" -D "chargerOpMode, reasonForNoCurrent" log.txt
+```
+
+### Example 10: Print Help Message
 
 ```bash
 ./parser.js -h
